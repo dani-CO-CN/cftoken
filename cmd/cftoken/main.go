@@ -29,6 +29,7 @@ func main() {
 		allowCIDRs      string
 		inspect         bool
 		inspectToken    string
+		dryRun          bool
 		timeout         time.Duration
 		verbose         bool
 	}{
@@ -49,6 +50,7 @@ func main() {
 	flag.StringVar(&flags.allowCIDRs, "allow-cidrs", defaultAllowedCIDRList, "Comma-separated CIDRs allowed to use the token")
 	flag.BoolVar(&flags.inspect, "inspect", false, "Inspect token details. With token creation this inspects the new token; otherwise it inspects the management token or a provided value.")
 	flag.StringVar(&flags.inspectToken, "inspect-token", "", "Token value to inspect when used with -inspect outside of token creation")
+	flag.BoolVar(&flags.dryRun, "dry-run", false, "Preview the token creation without calling the Cloudflare API")
 	flag.DurationVar(&flags.timeout, "timeout", flags.timeout, "Request timeout (e.g. 15s, 1m)")
 	flag.BoolVar(&flags.verbose, "v", flags.verbose, "Enable verbose logging")
 	flag.Usage = func() {
@@ -205,33 +207,19 @@ func main() {
 		expiresOn = &exp
 	}
 
+	if flags.dryRun {
+		if err := printDryRun(ctx, client, tokenName, zoneID, resolvedZoneName, permissionInputs, expiresOn, allowedCIDRs); err != nil {
+			log.Fatalf("dry run failed: %v", err)
+		}
+		return
+	}
+
 	result, err := client.CreateToken(ctx, tokenName, zoneID, permissionInputs, expiresOn, allowedCIDRs)
 	if err != nil {
 		log.Fatalf("token creation failed: %v", err)
 	}
 
-	fmt.Println("Token created successfully.")
-	fmt.Printf("Name:   %s\n", result.Name)
-	fmt.Printf("ID:     %s\n", result.ID)
-	if result.Value != "" {
-		fmt.Printf("Value:  %s\n", result.Value)
-	} else {
-		fmt.Println("Value:  <redacted by API>")
-	}
-	fmt.Printf("Status: %s\n", result.Status)
-	if resolvedZoneName != "" {
-		fmt.Printf("Zone ID: %s (%s)\n", result.ZoneID, resolvedZoneName)
-	} else {
-		fmt.Printf("Zone ID: %s\n", result.ZoneID)
-	}
-	if result.ExpiresOn != "" {
-		fmt.Printf("Expires: %s\n", result.ExpiresOn)
-	} else if flags.ttl > 0 {
-		fmt.Println("Expires: <not returned>")
-	} else {
-		fmt.Println("Expires: none")
-	}
-	fmt.Printf("Allowed CIDRs: %s\n", strings.Join(result.AllowedCIDRs, ", "))
+	printTokenResult(result, resolvedZoneName, flags.ttl)
 	if flags.inspect {
 		desc, err := client.DescribeToken(ctx, result.ID)
 		if err != nil {
@@ -274,6 +262,31 @@ func parseAllowedCIDRs(input string) ([]string, error) {
 		out = append(out, trimmed)
 	}
 	return out, nil
+}
+
+func printTokenResult(result *cloudflare.TokenResult, zoneName string, ttl time.Duration) {
+	fmt.Println("Token created successfully.")
+	fmt.Printf("Name:   %s\n", result.Name)
+	fmt.Printf("ID:     %s\n", result.ID)
+	if result.Value != "" {
+		fmt.Printf("Value:  %s\n", result.Value)
+	} else {
+		fmt.Println("Value:  <redacted by API>")
+	}
+	fmt.Printf("Status: %s\n", result.Status)
+	if zoneName != "" {
+		fmt.Printf("Zone ID: %s (%s)\n", result.ZoneID, zoneName)
+	} else {
+		fmt.Printf("Zone ID: %s\n", result.ZoneID)
+	}
+	if result.ExpiresOn != "" {
+		fmt.Printf("Expires: %s\n", result.ExpiresOn)
+	} else if ttl > 0 {
+		fmt.Println("Expires: <not returned>")
+	} else {
+		fmt.Println("Expires: none")
+	}
+	fmt.Printf("Allowed CIDRs: %s\n", strings.Join(result.AllowedCIDRs, ", "))
 }
 
 func printTokenInspection(desc *cloudflare.TokenInspection) {
@@ -358,5 +371,65 @@ func runInspection(ctx context.Context, management *cloudflare.Client, overrideT
 		return fmt.Errorf("describe token: %w", err)
 	}
 	printTokenInspection(desc)
+	return nil
+}
+
+func printDryRun(ctx context.Context, client *cloudflare.Client, tokenName, zoneID, zoneName string, permissionInputs []string, expiresOn *time.Time, allowedCIDRs []string) error {
+	params, matchedGroups, err := client.PreviewToken(ctx, tokenName, zoneID, permissionInputs, expiresOn, allowedCIDRs)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("DRY RUN: no changes made.")
+	fmt.Println("Token would be created with:")
+	fmt.Printf("  Name: %s\n", tokenName)
+	if zoneName != "" {
+		fmt.Printf("  Zone: %s (%s)\n", zoneName, zoneID)
+	} else {
+		fmt.Printf("  Zone ID: %s\n", zoneID)
+	}
+	if expiresOn != nil {
+		fmt.Printf("  Expires: %s\n", expiresOn.UTC().Format(time.RFC3339))
+	} else {
+		fmt.Println("  Expires: none")
+	}
+	if len(allowedCIDRs) > 0 {
+		fmt.Printf("  Allowed CIDRs: %s\n", strings.Join(allowedCIDRs, ", "))
+	} else {
+		fmt.Println("  Allowed CIDRs: none")
+	}
+	if len(permissionInputs) > 0 {
+		fmt.Printf("  Permission inputs: %s\n", strings.Join(permissionInputs, ", "))
+	}
+	fmt.Println("  Permission groups:")
+	if len(matchedGroups) == 0 {
+		fmt.Println("    (none)")
+	} else {
+		for _, group := range matchedGroups {
+			display := group.Name
+			if display == "" {
+				display = group.Meta.Key
+			}
+			if display == "" {
+				display = group.ID
+			}
+			if group.Meta.Key != "" && group.Meta.Key != display {
+				fmt.Printf("    - %s (%s, key: %s)\n", display, group.ID, group.Meta.Key)
+			} else {
+				fmt.Printf("    - %s (%s)\n", display, group.ID)
+			}
+		}
+	}
+	fmt.Println("  Resources:")
+	if policiesField := params.Policies; policiesField.Present {
+		policies := policiesField.Value
+		if len(policies) > 0 {
+			fmt.Printf("    - com.cloudflare.api.account.zone.%s -> *\n", zoneID)
+		} else {
+			fmt.Println("    (none)")
+		}
+	} else {
+		fmt.Println("    (none)")
+	}
 	return nil
 }

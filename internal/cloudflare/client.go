@@ -203,42 +203,12 @@ func (c *Client) CreateToken(ctx context.Context, tokenName, zoneID string, perm
 		return nil, fmt.Errorf("fetch permission groups: %w", err)
 	}
 
-	permissionRefs, err := matchPermissionGroups(perms, permissionInputs)
+	params, _, err := buildTokenParams(perms, tokenName, zoneID, permissionInputs, expiresOn, allowedCIDRs)
 	if err != nil {
 		return nil, err
 	}
 
-	resourceKey := fmt.Sprintf("com.cloudflare.api.account.zone.%s", zoneID)
-	policy := shared.TokenPolicyParam{
-		Effect:           cf.F(shared.TokenPolicyEffectAllow),
-		PermissionGroups: cf.F(permissionRefs),
-		Resources: cf.F[shared.TokenPolicyResourcesUnionParam](
-			shared.TokenPolicyResourcesIAMResourcesTypeObjectStringParam{
-				resourceKey: "*",
-			},
-		),
-	}
-
-	params := cfuser.TokenNewParams{
-		Name:     cf.F(tokenName),
-		Policies: cf.F([]shared.TokenPolicyParam{policy}),
-	}
-	if expiresOn != nil {
-		params.ExpiresOn = cf.F(expiresOn.UTC())
-	}
-	if len(allowedCIDRs) > 0 {
-		values := make([]shared.TokenConditionCIDRListParam, 0, len(allowedCIDRs))
-		for _, cidr := range allowedCIDRs {
-			values = append(values, shared.TokenConditionCIDRListParam(cidr))
-		}
-		params.Condition = cf.F(cfuser.TokenNewParamsCondition{
-			RequestIP: cf.F(cfuser.TokenNewParamsConditionRequestIP{
-				In: cf.F(values),
-			}),
-		})
-	}
-
-	resp, err := c.api.User.Tokens.New(ctx, params)
+	resp, err := c.api.User.Tokens.New(ctx, *params)
 	if err != nil {
 		return nil, fmt.Errorf("create token: %w", err)
 	}
@@ -258,6 +228,59 @@ func (c *Client) CreateToken(ctx context.Context, tokenName, zoneID string, perm
 		result.ExpiresOn = resp.ExpiresOn.UTC().Format(time.RFC3339)
 	}
 	return result, nil
+}
+
+// PreviewToken prepares the payload that would be sent to create a token without executing the API call.
+func (c *Client) PreviewToken(ctx context.Context, tokenName, zoneID string, permissionInputs []string, expiresOn *time.Time, allowedCIDRs []string) (*cfuser.TokenNewParams, []PermissionGroup, error) {
+	perms, err := c.PermissionGroups(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fetch permission groups: %w", err)
+	}
+
+	params, matchedGroups, err := buildTokenParams(perms, tokenName, zoneID, permissionInputs, expiresOn, allowedCIDRs)
+	if err != nil {
+		return nil, nil, err
+	}
+	return params, matchedGroups, nil
+}
+
+func buildTokenParams(perms []PermissionGroup, tokenName, zoneID string, permissionInputs []string, expiresOn *time.Time, allowedCIDRs []string) (*cfuser.TokenNewParams, []PermissionGroup, error) {
+	permissionRefs, matchedGroups, err := matchPermissionGroups(perms, permissionInputs)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	resourceKey := fmt.Sprintf("com.cloudflare.api.account.zone.%s", zoneID)
+	policy := shared.TokenPolicyParam{
+		Effect:           cf.F(shared.TokenPolicyEffectAllow),
+		PermissionGroups: cf.F(permissionRefs),
+		Resources: cf.F[shared.TokenPolicyResourcesUnionParam](
+			shared.TokenPolicyResourcesIAMResourcesTypeObjectStringParam{
+				resourceKey: "*",
+			},
+		),
+	}
+
+	params := &cfuser.TokenNewParams{
+		Name:     cf.F(tokenName),
+		Policies: cf.F([]shared.TokenPolicyParam{policy}),
+	}
+	if expiresOn != nil {
+		params.ExpiresOn = cf.F(expiresOn.UTC())
+	}
+	if len(allowedCIDRs) > 0 {
+		values := make([]shared.TokenConditionCIDRListParam, 0, len(allowedCIDRs))
+		for _, cidr := range allowedCIDRs {
+			values = append(values, shared.TokenConditionCIDRListParam(cidr))
+		}
+		params.Condition = cf.F(cfuser.TokenNewParamsCondition{
+			RequestIP: cf.F(cfuser.TokenNewParamsConditionRequestIP{
+				In: cf.F(values),
+			}),
+		})
+	}
+
+	return params, matchedGroups, nil
 }
 
 // VerifyToken returns metadata about the token configured on this client.
@@ -329,11 +352,12 @@ func (c *Client) DescribeToken(ctx context.Context, tokenID string) (*TokenInspe
 	return inspection, nil
 }
 
-func matchPermissionGroups(groups []PermissionGroup, inputs []string) ([]shared.TokenPolicyPermissionGroupParam, error) {
+func matchPermissionGroups(groups []PermissionGroup, inputs []string) ([]shared.TokenPolicyPermissionGroupParam, []PermissionGroup, error) {
 	if len(inputs) == 0 {
-		return nil, errors.New("no permission groups specified")
+		return nil, nil, errors.New("no permission groups specified")
 	}
 	matched := make([]shared.TokenPolicyPermissionGroupParam, 0, len(inputs))
+	matchedGroups := make([]PermissionGroup, 0, len(inputs))
 lookup:
 	for _, in := range inputs {
 		normalized := normalizeKey(in)
@@ -343,22 +367,25 @@ lookup:
 				matched = append(matched, shared.TokenPolicyPermissionGroupParam{
 					ID: cf.F(group.ID),
 				})
+				matchedGroups = append(matchedGroups, group)
 				continue lookup
 			case normalizeKey(group.Name) == normalized:
 				matched = append(matched, shared.TokenPolicyPermissionGroupParam{
 					ID: cf.F(group.ID),
 				})
+				matchedGroups = append(matchedGroups, group)
 				continue lookup
 			case group.Meta.Key != "" && normalizeKey(group.Meta.Key) == normalized:
 				matched = append(matched, shared.TokenPolicyPermissionGroupParam{
 					ID: cf.F(group.ID),
 				})
+				matchedGroups = append(matchedGroups, group)
 				continue lookup
 			}
 		}
-		return nil, fmt.Errorf("permission group %q not found; rerun with -list-permissions to inspect available values", in)
+		return nil, nil, fmt.Errorf("permission group %q not found; rerun with -list-permissions to inspect available values", in)
 	}
-	return matched, nil
+	return matched, matchedGroups, nil
 }
 
 func normalizeKey(s string) string {

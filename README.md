@@ -23,6 +23,7 @@ Flags of note:
 - `-allow-cidrs string` - comma-separated list of allowed requester CIDR ranges. Defaults to `10.0.0.1/32,10.0.0.2/32`; override with your own network.
 - `-inspect` - print a summary of token details. When combined with token creation it inspects the newly minted token; otherwise it inspects the management token.
 - `-inspect-token string` - print a summary for an arbitrary token value (for example, one you just created) and exit.
+- `-dry-run` - preview the resolved token configuration without creating it.
 - `-ttl duration` - token lifetime; defaults to `8h`. Use `-ttl 0` for no expiry.
 - `-list-permissions` - print available permission groups and exit.
 - `-list-zones` - print all configured zones in a table and exit.
