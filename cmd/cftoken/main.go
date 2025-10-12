@@ -44,8 +44,6 @@ func run() error {
 		ttl:     8 * time.Hour,
 	}
 
-	const builtinAllowedCIDRList = "10.0.0.1/32,10.0.0.2/32"
-
 	flag.StringVar(&flags.tokenPrefix, "token-prefix", "", "Prefix for the new API token (creation timestamp appended automatically)")
 	flag.StringVar(&flags.zoneID, "zone-id", "", "Zone identifier (UUID) the new token should access")
 	flag.StringVar(&flags.zoneName, "zone", "", "Zone name present in built-in or configured zone list")
@@ -53,7 +51,7 @@ func run() error {
 	flag.DurationVar(&flags.ttl, "ttl", flags.ttl, "Token TTL (use 0 for no expiration)")
 	flag.BoolVar(&flags.listPermissions, "list-permissions", false, "List permission groups available to the current token and exit")
 	flag.BoolVar(&flags.listZones, "list-zones", false, "List configured zones, then exit")
-	flag.StringVar(&flags.allowCIDRs, "allow-cidrs", builtinAllowedCIDRList, "Comma-separated CIDRs allowed to use the token (overrides config.json when provided)")
+	flag.StringVar(&flags.allowCIDRs, "allow-cidrs", "", "Comma-separated CIDRs allowed to use the token (overrides config.json when provided)")
 	flag.BoolVar(&flags.inspect, "inspect", false, "Inspect token details. With token creation this inspects the new token; otherwise it inspects the management token or a provided value.")
 	flag.StringVar(&flags.inspectToken, "inspect-token", "", "Token value to inspect when used with -inspect outside of token creation")
 	flag.BoolVar(&flags.dryRun, "dry-run", false, "Preview the token creation without calling the Cloudflare API")
@@ -181,30 +179,38 @@ func run() error {
 	creationTime := time.Now().UTC()
 	tokenName := flags.tokenPrefix + "-" + creationTime.Format("20060102T150405Z")
 
-	var allowedCIDRSource string
+	var (
+		allowedCIDRs          []string
+		ipRestrictionDisabled bool
+		err                   error
+	)
 	if allowCIDRsProvided {
-		allowedCIDRSource = flags.allowCIDRs
-	} else {
-		var configuredCIDRs []string
-		if cfgCIDRs, err := config.LoadDefaultAllowedCIDRs(); err == nil {
-			configuredCIDRs = cfgCIDRs
-		} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("load default allowed CIDRs: %w", err)
+		allowedCIDRs, ipRestrictionDisabled, err = parseAllowedCIDRs(flags.allowCIDRs)
+		if err != nil {
+			return fmt.Errorf("parse CIDRs: %w", err)
 		}
-		switch {
-		case len(configuredCIDRs) > 0:
-			allowedCIDRSource = strings.Join(configuredCIDRs, ",")
-		default:
-			allowedCIDRSource = builtinAllowedCIDRList
+	} else {
+		cfgCIDRs, cfgErr := config.LoadDefaultAllowedCIDRs()
+		if cfgErr != nil {
+			if errors.Is(cfgErr, fs.ErrNotExist) {
+				return fmt.Errorf("no allowed CIDRs configured; set -allow-cidrs or add default_allowed_cidrs to config.json")
+			}
+			return fmt.Errorf("load default allowed CIDRs: %w", cfgErr)
+		}
+		allowedCIDRs, ipRestrictionDisabled, err = normalizeCIDRList(cfgCIDRs)
+		if err != nil {
+			return fmt.Errorf("config default_allowed_cidrs: %w", err)
 		}
 	}
 
-	allowedCIDRs, err := parseAllowedCIDRs(strings.TrimSpace(allowedCIDRSource))
-	if err != nil {
-		return fmt.Errorf("parse CIDRs: %w", err)
-	}
-	if len(allowedCIDRs) == 0 {
-		return fmt.Errorf("no allowed CIDRs provided; use -allow-cidrs to specify one or more ranges")
+	switch {
+	case ipRestrictionDisabled:
+	case len(allowedCIDRs) > 0:
+	default:
+		if allowCIDRsProvided {
+			return fmt.Errorf("no allowed CIDRs provided; use -allow-cidrs to specify one or more ranges")
+		}
+		return fmt.Errorf("no allowed CIDRs configured; set -allow-cidrs or add default_allowed_cidrs to config.json")
 	}
 
 	var expiresOn *time.Time
@@ -252,23 +258,36 @@ func looksLikeZoneID(s string) bool {
 	return true
 }
 
-func parseAllowedCIDRs(input string) ([]string, error) {
-	if strings.TrimSpace(input) == "" {
-		return nil, nil
-	}
-	parts := strings.Split(input, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		trimmed := strings.TrimSpace(p)
+func parseAllowedCIDRs(input string) ([]string, bool, error) {
+	values := strings.Split(input, ",")
+	sanitized := make([]string, 0, len(values))
+	for _, raw := range values {
+		trimmed := strings.TrimSpace(raw)
 		if trimmed == "" {
 			continue
 		}
-		if _, _, err := net.ParseCIDR(trimmed); err != nil {
-			return nil, fmt.Errorf("invalid CIDR %q: %w", trimmed, err)
-		}
-		out = append(out, trimmed)
+		sanitized = append(sanitized, trimmed)
 	}
-	return out, nil
+	return normalizeCIDRList(sanitized)
+}
+
+func normalizeCIDRList(values []string) ([]string, bool, error) {
+	out := make([]string, 0, len(values))
+	for _, cidr := range values {
+		cidr = strings.TrimSpace(cidr)
+		if cidr == "" {
+			continue
+		}
+		if cidr == "0.0.0.0/32" {
+			// Sentinel for disabling IP restrictions.
+			return nil, true, nil
+		}
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return nil, false, fmt.Errorf("invalid CIDR %q: %w", cidr, err)
+		}
+		out = append(out, cidr)
+	}
+	return out, false, nil
 }
 
 func printTokenResult(result *cloudflare.TokenResult, zoneName string, ttl time.Duration) {

@@ -20,7 +20,7 @@ Flags of note:
 - `-token-prefix string` - required; the CLI appends a UTC timestamp to produce the final token name.
 - `-zone-id string` or `-zone string` - supply a zone UUID directly or a friendly zone name defined in defaults or overrides.
 - `-permissions string` - comma-separated permission groups; defaults to `Zone:Read` unless config overrides exist.
-- `-allow-cidrs string` - comma-separated list of allowed requester CIDR ranges. Defaults to `10.0.0.1/32,10.0.0.2/32`; override with your own network.
+- `-allow-cidrs string` - comma-separated list of allowed requester CIDR ranges. Required unless `default_allowed_cidrs` is present in config; use `0.0.0.0/32` to disable IP restrictions. The flag always wins.
 - `-inspect` - print a summary of token details. When combined with token creation it inspects the newly minted token; otherwise it inspects the management token.
 - `-inspect-token string` - print a summary for an arbitrary token value (for example, one you just created) and exit.
 - `-dry-run` - preview the resolved token configuration without creating it.
@@ -59,6 +59,8 @@ These defaults are optional, but when present they replace the CLI fallbacks:
 - `zones` powers `-zone` lookups and the `-list-zones` command; run `go run ./cmd/cftoken -list-zones` to verify entries.
 
 Command-line flags always take precedence over `config.json` values, so pass `-permissions` or `-allow-cidrs` to override the defaults on demand.
+
+Use `0.0.0.0/32` in either the flag or config to disable IP restrictions entirely for the issued token.
 
 The CLI always prints the final allowed CIDR list for the newly created token so you can audit the restriction that Cloudflare enforces.
 
