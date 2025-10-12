@@ -1,11 +1,9 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -25,43 +23,16 @@ type ZoneEntry struct {
 	Source ZoneSource
 }
 
-// ZonesPath resolves the path to the user-specified zone overrides file.
-func ZonesPath() (string, error) {
-	dir, err := configDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "zones.json"), nil
-}
-
 // LoadZoneOverrides reads user-defined zones, if present.
 func LoadZoneOverrides() (map[string]string, error) {
-	path, err := ZonesPath()
-	if err != nil {
-		return nil, err
-	}
-	data, err := os.ReadFile(path)
+	cfg, err := loadSettings()
 	if err != nil {
 		return nil, err
 	}
 
-	var raw map[string]string
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parse zones %s: %w", path, err)
-	}
-
-	out := make(map[string]string, len(raw))
-	for name, id := range raw {
-		n := normalizeZoneName(name)
-		if n == "" {
-			continue
-		}
-		if trimmed := strings.TrimSpace(id); trimmed != "" {
-			out[n] = trimmed
-		}
-	}
+	out := sanitizeZones(cfg.Zones)
 	if len(out) == 0 {
-		return nil, errors.New("zones.json contains no valid entries")
+		return nil, errors.New("config zones contains no valid entries")
 	}
 	return out, nil
 }
@@ -126,6 +97,27 @@ func ResolveZoneID(zoneName string) (string, error) {
 		return id, nil
 	}
 	return "", fmt.Errorf("zone %q not found in default or configured zones", zoneName)
+}
+
+func sanitizeZones(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(values))
+	for name, id := range values {
+		n := normalizeZoneName(name)
+		if n == "" {
+			continue
+		}
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			out[n] = trimmed
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func normalizeZoneName(s string) string {

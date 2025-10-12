@@ -34,12 +34,14 @@ func TestNormalizeZoneName(t *testing.T) {
 
 func TestZoneMapIncludesOverrides(t *testing.T) {
 	tmp := t.TempDir()
-	overridePath := configFilePath(t, tmp, "zones.json")
+	overridePath := configFilePath(t, tmp, "config.json")
 	raw := map[string]string{
 		"example.com":  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"override.com": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	}
-	writeJSON(t, overridePath, raw)
+	writeJSON(t, overridePath, map[string]any{
+		"zones": raw,
+	})
 
 	stubConfigDir(t, tmp)
 
@@ -64,12 +66,14 @@ func TestZoneMapIncludesOverrides(t *testing.T) {
 
 func TestListConfiguredZonesSources(t *testing.T) {
 	tmp := t.TempDir()
-	overridePath := configFilePath(t, tmp, "zones.json")
+	overridePath := configFilePath(t, tmp, "config.json")
 	overrideData := map[string]string{
 		"default.com": "override-default",
 		"config.com":  "config-zone",
 	}
-	writeJSON(t, overridePath, overrideData)
+	writeJSON(t, overridePath, map[string]any{
+		"zones": overrideData,
+	})
 
 	stubConfigDir(t, tmp)
 
@@ -111,11 +115,13 @@ func TestListConfiguredZonesSources(t *testing.T) {
 
 func TestLoadZoneOverridesEmpty(t *testing.T) {
 	tmp := t.TempDir()
-	writeJSON(t, configFilePath(t, tmp, "zones.json"), map[string]string{})
+	writeJSON(t, configFilePath(t, tmp, "config.json"), map[string]any{
+		"zones": map[string]string{},
+	})
 	stubConfigDir(t, tmp)
 
 	overrides, err := LoadZoneOverrides()
-	if err == nil || !strings.Contains(err.Error(), "zones.json contains no valid entries") {
+	if err == nil || !strings.Contains(err.Error(), "config zones contains no valid entries") {
 		t.Fatalf("LoadZoneOverrides() error = %v, want empty-entry error", err)
 	}
 	if overrides != nil {
@@ -125,7 +131,7 @@ func TestLoadZoneOverridesEmpty(t *testing.T) {
 
 func TestZoneMapErrorPropagation(t *testing.T) {
 	tmp := t.TempDir()
-	writeFile(t, configFilePath(t, tmp, "zones.json"), "{invalid json")
+	writeFile(t, configFilePath(t, tmp, "config.json"), "{invalid json")
 	stubConfigDir(t, tmp)
 
 	if _, err := ZoneMap(); err == nil {

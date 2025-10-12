@@ -35,27 +35,30 @@ You can open the compiled binary usage any time:
 go run ./cmd/cftoken -h
 ```
 
-## Zone Configuration
-Zones are loaded exclusively from `~/.config/cftoken/zones.json` (or `$XDG_CONFIG_HOME/cftoken/zones.json`). Example:
-```json
-{
-  "example.com": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "internal.example": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-}
-```
-Run `go run ./cmd/cftoken -list-zones` to verify merged entries and their sources.
-
-## Permissions Defaults
-Optional defaults belong in `$XDG_CONFIG_HOME/cftoken/config.json`:
+## Configuration
+The CLI reads a single JSON file at `$XDG_CONFIG_HOME/cftoken/config.json` (falls back to `~/.config/cftoken/config.json`). You can provide default permissions, allowed CIDRs, and zone mappings:
 ```json
 {
   "default_permissions": [
     "Zone:Read",
     "Zone:Cache Purge"
-  ]
+  ],
+  "default_allowed_cidrs": [
+    "10.0.0.1/32",
+    "10.0.0.2/32"
+  ],
+  "zones": {
+    "example.com": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "internal.example": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
 }
 ```
-If present, these replace the CLI fallback when `-permissions` is omitted.
+These defaults are optional, but when present they replace the CLI fallbacks:
+- `default_permissions` seeds the `-permissions` flag when omitted.
+- `default_allowed_cidrs` seeds the `-allow-cidrs` flag when omitted.
+- `zones` powers `-zone` lookups and the `-list-zones` command; run `go run ./cmd/cftoken -list-zones` to verify entries.
+
+Command-line flags always take precedence over `config.json` values, so pass `-permissions` or `-allow-cidrs` to override the defaults on demand.
 
 The CLI always prints the final allowed CIDR list for the newly created token so you can audit the restriction that Cloudflare enforces.
 

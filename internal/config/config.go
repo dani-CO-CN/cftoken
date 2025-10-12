@@ -2,8 +2,8 @@ package config
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +11,9 @@ import (
 
 // settings mirrors the JSON structure stored in the config file.
 type settings struct {
-	DefaultPermissions []string `json:"default_permissions"`
+	DefaultPermissions  []string          `json:"default_permissions"`
+	DefaultAllowedCIDRs []string          `json:"default_allowed_cidrs"`
+	Zones               map[string]string `json:"zones"`
 }
 
 // DefaultPath resolves the config file path according to XDG conventions.
@@ -37,6 +39,34 @@ func configDir() (string, error) {
 // LoadDefaultPermissions reads the configuration file (if present) and returns
 // the default permission keys defined within.
 func LoadDefaultPermissions() ([]string, error) {
+	cfg, err := loadSettings()
+	if err != nil {
+		return nil, err
+	}
+
+	perms := sanitizeStringList(cfg.DefaultPermissions)
+	if len(perms) == 0 {
+		return nil, fs.ErrNotExist
+	}
+	return perms, nil
+}
+
+// LoadDefaultAllowedCIDRs reads the configuration file (if present) and returns
+// the default allowed CIDR ranges defined within.
+func LoadDefaultAllowedCIDRs() ([]string, error) {
+	cfg, err := loadSettings()
+	if err != nil {
+		return nil, err
+	}
+
+	cidrs := sanitizeStringList(cfg.DefaultAllowedCIDRs)
+	if len(cidrs) == 0 {
+		return nil, fs.ErrNotExist
+	}
+	return cidrs, nil
+}
+
+func loadSettings() (*settings, error) {
 	path, err := DefaultPath()
 	if err != nil {
 		return nil, err
@@ -51,14 +81,15 @@ func LoadDefaultPermissions() ([]string, error) {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 
-	out := make([]string, 0, len(cfg.DefaultPermissions))
-	for _, entry := range cfg.DefaultPermissions {
+	return &cfg, nil
+}
+
+func sanitizeStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, entry := range values {
 		if trimmed := strings.TrimSpace(entry); trimmed != "" {
 			out = append(out, trimmed)
 		}
 	}
-	if len(out) == 0 {
-		return nil, errors.New("config default_permissions is empty")
-	}
-	return out, nil
+	return out
 }

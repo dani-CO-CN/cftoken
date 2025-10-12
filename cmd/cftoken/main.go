@@ -44,7 +44,7 @@ func run() error {
 		ttl:     8 * time.Hour,
 	}
 
-	const defaultAllowedCIDRList = "10.0.0.1/32,10.0.0.2/32"
+	const builtinAllowedCIDRList = "10.0.0.1/32,10.0.0.2/32"
 
 	flag.StringVar(&flags.tokenPrefix, "token-prefix", "", "Prefix for the new API token (creation timestamp appended automatically)")
 	flag.StringVar(&flags.zoneID, "zone-id", "", "Zone identifier (UUID) the new token should access")
@@ -53,7 +53,7 @@ func run() error {
 	flag.DurationVar(&flags.ttl, "ttl", flags.ttl, "Token TTL (use 0 for no expiration)")
 	flag.BoolVar(&flags.listPermissions, "list-permissions", false, "List permission groups available to the current token and exit")
 	flag.BoolVar(&flags.listZones, "list-zones", false, "List configured zones, then exit")
-	flag.StringVar(&flags.allowCIDRs, "allow-cidrs", defaultAllowedCIDRList, "Comma-separated CIDRs allowed to use the token")
+	flag.StringVar(&flags.allowCIDRs, "allow-cidrs", builtinAllowedCIDRList, "Comma-separated CIDRs allowed to use the token (overrides config.json when provided)")
 	flag.BoolVar(&flags.inspect, "inspect", false, "Inspect token details. With token creation this inspects the new token; otherwise it inspects the management token or a provided value.")
 	flag.StringVar(&flags.inspectToken, "inspect-token", "", "Token value to inspect when used with -inspect outside of token creation")
 	flag.BoolVar(&flags.dryRun, "dry-run", false, "Preview the token creation without calling the Cloudflare API")
@@ -92,6 +92,19 @@ func run() error {
 	if flags.listZones {
 		return listZones()
 	}
+
+	var (
+		allowCIDRsProvided  bool
+		permissionsProvided bool
+	)
+	flag.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "allow-cidrs":
+			allowCIDRsProvided = true
+		case "permissions":
+			permissionsProvided = true
+		}
+	})
 
 	flags.tokenPrefix = strings.TrimSpace(flags.tokenPrefix)
 	flags.zoneID = strings.TrimSpace(flags.zoneID)
@@ -132,32 +145,61 @@ func run() error {
 	}
 
 	var configuredPermissions []string
-	if cfgPerms, err := config.LoadDefaultPermissions(); err == nil {
-		configuredPermissions = cfgPerms
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("load default permissions: %w", err)
+	if !permissionsProvided {
+		if cfgPerms, err := config.LoadDefaultPermissions(); err == nil {
+			configuredPermissions = cfgPerms
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("load default permissions: %w", err)
+		}
 	}
 
 	var permissionInputs []string
-	if strings.TrimSpace(flags.permissions) == "" {
-		switch {
-		case len(configuredPermissions) > 0:
-			permissionInputs = append([]string(nil), configuredPermissions...)
-		default:
+	switch {
+	case permissionsProvided:
+		if strings.TrimSpace(flags.permissions) == "" {
 			permissionInputs = append([]string(nil), cloudflare.DefaultPermissionKeys...)
+		} else {
+			for _, part := range strings.Split(flags.permissions, ",") {
+				if trimmed := strings.TrimSpace(part); trimmed != "" {
+					permissionInputs = append(permissionInputs, trimmed)
+				}
+			}
 		}
-	} else {
+	case len(configuredPermissions) > 0:
+		permissionInputs = append([]string(nil), configuredPermissions...)
+	default:
 		for _, part := range strings.Split(flags.permissions, ",") {
 			if trimmed := strings.TrimSpace(part); trimmed != "" {
 				permissionInputs = append(permissionInputs, trimmed)
 			}
+		}
+		if len(permissionInputs) == 0 {
+			permissionInputs = append([]string(nil), cloudflare.DefaultPermissionKeys...)
 		}
 	}
 
 	creationTime := time.Now().UTC()
 	tokenName := flags.tokenPrefix + "-" + creationTime.Format("20060102T150405Z")
 
-	allowedCIDRs, err := parseAllowedCIDRs(flags.allowCIDRs)
+	var allowedCIDRSource string
+	if allowCIDRsProvided {
+		allowedCIDRSource = flags.allowCIDRs
+	} else {
+		var configuredCIDRs []string
+		if cfgCIDRs, err := config.LoadDefaultAllowedCIDRs(); err == nil {
+			configuredCIDRs = cfgCIDRs
+		} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("load default allowed CIDRs: %w", err)
+		}
+		switch {
+		case len(configuredCIDRs) > 0:
+			allowedCIDRSource = strings.Join(configuredCIDRs, ",")
+		default:
+			allowedCIDRSource = builtinAllowedCIDRList
+		}
+	}
+
+	allowedCIDRs, err := parseAllowedCIDRs(strings.TrimSpace(allowedCIDRSource))
 	if err != nil {
 		return fmt.Errorf("parse CIDRs: %w", err)
 	}
@@ -342,10 +384,10 @@ func listZones() error {
 	zones, err := config.ListConfiguredZones()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			if path, pathErr := config.ZonesPath(); pathErr == nil {
-				return fmt.Errorf("no zones configured; create %s", path)
+			if path, pathErr := config.DefaultPath(); pathErr == nil {
+				return fmt.Errorf("no zones configured; add a zones map to %s", path)
 			}
-			return fmt.Errorf("no zones configured; create a zones.json file in your config directory")
+			return fmt.Errorf("no zones configured; add a zones map to your config.json file")
 		}
 		return fmt.Errorf("failed to load configured zones: %w", err)
 	}
