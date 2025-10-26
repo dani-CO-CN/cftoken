@@ -196,14 +196,23 @@ func (c *Client) PermissionGroups(ctx context.Context) ([]PermissionGroup, error
 	return groups, nil
 }
 
-// CreateToken provisions a new token scoped to the provided zone identifier with the desired permissions.
-func (c *Client) CreateToken(ctx context.Context, tokenName, zoneID string, permissionInputs []string, expiresOn *time.Time, allowedCIDRs []string) (*TokenResult, error) {
-	perms, err := c.PermissionGroups(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("fetch permission groups: %w", err)
-	}
+// Policy represents a Cloudflare API token policy ready to be converted to API parameters.
+type Policy struct {
+	ID               string                 `json:"id,omitempty"`
+	Effect           string                 `json:"effect"`
+	Resources        map[string]interface{} `json:"resources"`
+	PermissionGroups []PolicyPermissionGroup `json:"permission_groups"`
+}
 
-	params, _, err := buildTokenParams(perms, tokenName, zoneID, permissionInputs, expiresOn, allowedCIDRs)
+// PolicyPermissionGroup represents a permission group in a policy.
+type PolicyPermissionGroup struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+// CreateTokenWithPolicies provisions a new token using policy structures.
+func (c *Client) CreateTokenWithPolicies(ctx context.Context, tokenName string, policies []Policy, expiresOn *time.Time, allowedCIDRs []string) (*TokenResult, error) {
+	params, err := buildTokenParamsFromPolicies(tokenName, policies, expiresOn, allowedCIDRs)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +230,6 @@ func (c *Client) CreateToken(ctx context.Context, tokenName, zoneID string, perm
 		Name:         resp.Name,
 		Status:       string(resp.Status),
 		Value:        string(resp.Value),
-		ZoneID:       zoneID,
 		AllowedCIDRs: append([]string(nil), allowedCIDRs...),
 	}
 	if !resp.ExpiresOn.IsZero() {
@@ -230,40 +238,71 @@ func (c *Client) CreateToken(ctx context.Context, tokenName, zoneID string, perm
 	return result, nil
 }
 
-// PreviewToken prepares the payload that would be sent to create a token without executing the API call.
-func (c *Client) PreviewToken(ctx context.Context, tokenName, zoneID string, permissionInputs []string, expiresOn *time.Time, allowedCIDRs []string) (*cfuser.TokenNewParams, []PermissionGroup, error) {
+// MatchPermissions matches user-provided permission inputs to permission groups.
+func (c *Client) MatchPermissions(ctx context.Context, permissionInputs []string) ([]PermissionGroup, error) {
 	perms, err := c.PermissionGroups(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("fetch permission groups: %w", err)
+		return nil, fmt.Errorf("fetch permission groups: %w", err)
 	}
 
-	params, matchedGroups, err := buildTokenParams(perms, tokenName, zoneID, permissionInputs, expiresOn, allowedCIDRs)
+	_, matchedGroups, err := matchPermissionGroups(perms, permissionInputs)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return params, matchedGroups, nil
+	return matchedGroups, nil
 }
 
-func buildTokenParams(perms []PermissionGroup, tokenName, zoneID string, permissionInputs []string, expiresOn *time.Time, allowedCIDRs []string) (*cfuser.TokenNewParams, []PermissionGroup, error) {
-	permissionRefs, matchedGroups, err := matchPermissionGroups(perms, permissionInputs)
-	if err != nil {
-		return nil, nil, err
+func buildTokenParamsFromPolicies(tokenName string, policies []Policy, expiresOn *time.Time, allowedCIDRs []string) (*cfuser.TokenNewParams, error) {
+	if len(policies) == 0 {
+		return nil, errors.New("at least one policy is required")
 	}
 
-	resourceKey := fmt.Sprintf("com.cloudflare.api.account.zone.%s", zoneID)
-	policy := shared.TokenPolicyParam{
-		Effect:           cf.F(shared.TokenPolicyEffectAllow),
-		PermissionGroups: cf.F(permissionRefs),
-		Resources: cf.F[shared.TokenPolicyResourcesUnionParam](
-			shared.TokenPolicyResourcesIAMResourcesTypeObjectStringParam{
-				resourceKey: "*",
-			},
-		),
+	policyParams := make([]shared.TokenPolicyParam, 0, len(policies))
+	for _, policy := range policies {
+		// Convert permission groups
+		permGroups := make([]shared.TokenPolicyPermissionGroupParam, 0, len(policy.PermissionGroups))
+		for _, pg := range policy.PermissionGroups {
+			permGroups = append(permGroups, shared.TokenPolicyPermissionGroupParam{
+				ID: cf.F(pg.ID),
+			})
+		}
+
+		// Convert resources map to API format
+		resourcesParam := shared.TokenPolicyResourcesIAMResourcesTypeObjectStringParam{}
+		for key, value := range policy.Resources {
+			if strValue, ok := value.(string); ok {
+				resourcesParam[key] = strValue
+			} else {
+				// Handle non-string values by converting to string
+				resourcesParam[key] = fmt.Sprintf("%v", value)
+			}
+		}
+
+		// Build policy param
+		policyParam := shared.TokenPolicyParam{
+			PermissionGroups: cf.F(permGroups),
+			Resources: cf.F[shared.TokenPolicyResourcesUnionParam](resourcesParam),
+		}
+
+		// Set effect (default to "allow" if not specified)
+		effect := policy.Effect
+		if effect == "" {
+			effect = "allow"
+		}
+		if effect == "allow" {
+			policyParam.Effect = cf.F(shared.TokenPolicyEffectAllow)
+		} else if effect == "deny" {
+			policyParam.Effect = cf.F(shared.TokenPolicyEffectDeny)
+		} else {
+			return nil, fmt.Errorf("invalid policy effect %q; must be 'allow' or 'deny'", effect)
+		}
+
+		policyParams = append(policyParams, policyParam)
 	}
 
 	params := &cfuser.TokenNewParams{
 		Name:     cf.F(tokenName),
-		Policies: cf.F([]shared.TokenPolicyParam{policy}),
+		Policies: cf.F(policyParams),
 	}
 	if expiresOn != nil {
 		params.ExpiresOn = cf.F(expiresOn.UTC())
@@ -280,7 +319,7 @@ func buildTokenParams(perms []PermissionGroup, tokenName, zoneID string, permiss
 		})
 	}
 
-	return params, matchedGroups, nil
+	return params, nil
 }
 
 // VerifyToken returns metadata about the token configured on this client.

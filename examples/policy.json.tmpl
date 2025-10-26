@@ -1,0 +1,30 @@
+[
+  {
+    "effect": "allow",
+    "resources": {
+      "com.cloudflare.api.account.zone.{{ .ZoneID }}": "*"
+    },
+    "permission_groups": [
+      {
+        "id": "c8fed203ed3043cba015a93ad1616f1f",
+        "name": "Zone Read"
+      },
+      {
+        "id": "82e64a83756745bbbb1c9c2701bf816b",
+        "name": "DNS Read"
+      }
+      {{- if .IncludeCachePurge }},
+      {
+        "id": "e17beae8b8cb423a99b1730f21238bed",
+        "name": "Cache Purge"
+      }
+      {{- end }}
+      {{- if .IncludeEdit }},
+      {
+        "id": "e086da7e2179491d91ee5f35b3ca210a",
+        "name": "Zone Settings Write"
+      }
+      {{- end }}
+    ]
+  }
+]
