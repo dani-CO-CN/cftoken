@@ -23,7 +23,7 @@ type ZoneEntry struct {
 	Source ZoneSource
 }
 
-// LoadZoneOverrides reads user-defined zones, if present.
+// LoadZoneOverrides reads user-defined zones and extracts zone IDs.
 func LoadZoneOverrides() (map[string]string, error) {
 	cfg, err := loadSettings()
 	if err != nil {
@@ -37,7 +37,7 @@ func LoadZoneOverrides() (map[string]string, error) {
 	return out, nil
 }
 
-// ZoneMap returns the configured zones, if any.
+// ZoneMap returns a map of zone names to zone IDs.
 func ZoneMap() (map[string]string, error) {
 	overrides, err := LoadZoneOverrides()
 	if err != nil {
@@ -99,19 +99,35 @@ func ResolveZoneID(zoneName string) (string, error) {
 	return "", fmt.Errorf("zone %q not found in default or configured zones", zoneName)
 }
 
-func sanitizeZones(values map[string]string) map[string]string {
+func sanitizeZones(values map[string]interface{}) map[string]string {
 	if len(values) == 0 {
 		return nil
 	}
 
 	out := make(map[string]string, len(values))
-	for name, id := range values {
+	for name, value := range values {
 		n := normalizeZoneName(name)
 		if n == "" {
 			continue
 		}
-		if trimmed := strings.TrimSpace(id); trimmed != "" {
-			out[n] = trimmed
+
+		// Handle simple string zone ID
+		if zoneID, ok := value.(string); ok {
+			if trimmed := strings.TrimSpace(zoneID); trimmed != "" {
+				out[n] = trimmed
+			}
+			continue
+		}
+
+		// Handle complex zone object with zone_id field
+		if zoneMap, ok := value.(map[string]interface{}); ok {
+			if zoneIDValue, exists := zoneMap["zone_id"]; exists {
+				if zoneID, ok := zoneIDValue.(string); ok {
+					if trimmed := strings.TrimSpace(zoneID); trimmed != "" {
+						out[n] = trimmed
+					}
+				}
+			}
 		}
 	}
 	if len(out) == 0 {

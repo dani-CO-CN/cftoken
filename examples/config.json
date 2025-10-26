@@ -1,0 +1,48 @@
+{
+  "default_permissions": [
+    "Zone:Read",
+    "Zone:Cache Purge"
+  ],
+  "default_allowed_cidrs": [
+    "10.0.0.1/32"
+  ],
+  "zones": {
+    "simple.example.com": "dddddddddddddddddddddddddddddddd",
+    "dev": {
+      "zone_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "allowed_cidrs": ["10.0.1.0/24"],
+      "ttl": "4h",
+      "template_file": "~/.config/cftoken/templates/policy.json.tmpl",
+      "variables": {
+        "IncludeCachePurge": false,
+        "IncludeEdit": false
+      }
+    },
+    "staging": {
+      "zone_id": "cccccccccccccccccccccccccccccccc",
+      "allowed_cidrs": ["10.0.2.0/24"],
+      "ttl": "8h",
+      "template_file": "~/.config/cftoken/templates/policy.json.tmpl",
+      "variables": {
+        "IncludeCachePurge": true,
+        "IncludeEdit": false
+      }
+    },
+    "prod": {
+      "zone_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "allowed_cidrs": ["203.0.113.1/32", "203.0.113.2/32"],
+      "ttl": "8h",
+      "template_file": "~/.config/cftoken/templates/policy.json.tmpl",
+      "variables": {
+        "IncludeCachePurge": true,
+        "IncludeEdit": true
+      }
+    },
+    "readonly": {
+      "zone_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "permissions": ["Zone:Read"],
+      "allowed_cidrs": ["10.0.0.1/32"],
+      "ttl": "1h"
+    }
+  }
+}

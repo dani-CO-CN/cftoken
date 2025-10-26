@@ -15,7 +15,34 @@ import (
 
 	"cftoken/internal/cloudflare"
 	"cftoken/internal/config"
+	"cftoken/internal/template"
 )
+
+// varFlag implements flag.Value for repeatable -var key=value flags.
+type varFlag map[string]string
+
+func (v *varFlag) String() string {
+	if *v == nil {
+		return ""
+	}
+	parts := make([]string, 0, len(*v))
+	for k, val := range *v {
+		parts = append(parts, fmt.Sprintf("%s=%s", k, val))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func (v *varFlag) Set(value string) error {
+	parts := strings.SplitN(value, "=", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid format; expected key=value, got %q", value)
+	}
+	if *v == nil {
+		*v = make(map[string]string)
+	}
+	(*v)[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+	return nil
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -24,6 +51,8 @@ func main() {
 }
 
 func run() error {
+	var templateVars varFlag
+
 	flags := struct {
 		tokenPrefix     string
 		zoneID          string
@@ -38,15 +67,17 @@ func run() error {
 		dryRun          bool
 		timeout         time.Duration
 		verbose         bool
+		templateVars    *varFlag
 	}{
-		timeout: 30 * time.Second,
-		verbose: false,
-		ttl:     8 * time.Hour,
+		timeout:      30 * time.Second,
+		verbose:      false,
+		ttl:          8 * time.Hour,
+		templateVars: &templateVars,
 	}
 
-	flag.StringVar(&flags.tokenPrefix, "token-prefix", "", "Prefix for the new API token (creation timestamp appended automatically)")
+	flag.StringVar(&flags.tokenPrefix, "token-prefix", "", "Prefix for the new API token (defaults to zone name if not provided; timestamp appended automatically)")
 	flag.StringVar(&flags.zoneID, "zone-id", "", "Zone identifier (UUID) the new token should access")
-	flag.StringVar(&flags.zoneName, "zone", "", "Zone name present in built-in or configured zone list")
+	flag.StringVar(&flags.zoneName, "zone", "", "Zone name or configured zone with extended settings")
 	flag.StringVar(&flags.permissions, "permissions", "", "Comma-separated permission group names or IDs (default: Zone:Read)")
 	flag.DurationVar(&flags.ttl, "ttl", flags.ttl, "Token TTL (use 0 for no expiration)")
 	flag.BoolVar(&flags.listPermissions, "list-permissions", false, "List permission groups available to the current token and exit")
@@ -57,6 +88,7 @@ func run() error {
 	flag.BoolVar(&flags.dryRun, "dry-run", false, "Preview the token creation without calling the Cloudflare API")
 	flag.DurationVar(&flags.timeout, "timeout", flags.timeout, "Request timeout (e.g. 15s, 1m)")
 	flag.BoolVar(&flags.verbose, "v", flags.verbose, "Enable verbose logging")
+	flag.Var(flags.templateVars, "var", "Template variable in key=value format (can be specified multiple times; overrides config variables)")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -114,7 +146,8 @@ func run() error {
 		return fmt.Errorf("-inspect-token requires -inspect")
 	}
 
-	createToken := flags.tokenPrefix != ""
+	// Determine if user intends to create a token (has zone or token-prefix)
+	createToken := flags.tokenPrefix != "" || flags.zoneName != "" || flags.zoneID != ""
 	if createToken && flags.inspectToken != "" {
 		return fmt.Errorf("-inspect-token cannot be combined with token creation; the new token is inspected automatically")
 	}
@@ -122,24 +155,85 @@ func run() error {
 		return runInspection(ctx, client, flags.inspectToken)
 	}
 
-	if flags.tokenPrefix == "" {
-		return fmt.Errorf("missing token prefix: provide via -token-prefix")
-	}
-
 	zoneID := flags.zoneID
 	var resolvedZoneName string
+	var zoneConfig *config.ZoneConfig
+
+	// Try to load zone configuration if zone name is provided
 	if zoneID == "" && flags.zoneName != "" {
-		if id, err := config.ResolveZoneID(flags.zoneName); err == nil {
-			zoneID = id
+		loadedZoneID, loadedConfig, err := config.LoadZoneConfig(flags.zoneName)
+		if err == nil {
+			// Zone found in config
+			zoneID = loadedZoneID
+			zoneConfig = loadedConfig
 			resolvedZoneName = flags.zoneName
 		} else if looksLikeZoneID(flags.zoneName) {
+			// Fallback: treat as direct zone ID
 			zoneID = flags.zoneName
 		} else {
 			return fmt.Errorf("resolve zone %q: %v", flags.zoneName, err)
 		}
 	}
+
 	if zoneID == "" {
 		return fmt.Errorf("missing zone identifier: provide via -zone-id or -zone")
+	}
+
+	// Default token-prefix to zone name if not provided
+	if flags.tokenPrefix == "" && resolvedZoneName != "" {
+		flags.tokenPrefix = resolvedZoneName
+	}
+
+	if flags.tokenPrefix == "" {
+		return fmt.Errorf("missing token prefix: provide via -token-prefix or use -zone with a named zone")
+	}
+
+	// Apply zone configuration if present
+	var renderedPolicies []template.Policy
+	if zoneConfig != nil {
+		// Render permissions template if present, otherwise use static permissions
+		if !permissionsProvided {
+			if zoneConfig.TemplateFile != "" || zoneConfig.TemplateInline != "" {
+				// Merge variables with precedence: CLI flags > zone variables > auto-injected ZoneID
+				vars := make(template.Variables)
+
+				// Auto-inject ZoneID from zone config (lowest priority)
+				if zoneConfig.ZoneID != "" {
+					vars["ZoneID"] = zoneConfig.ZoneID
+				}
+
+				// Zone config variables (middle priority)
+				for k, v := range zoneConfig.Variables {
+					vars[k] = v
+				}
+
+				// CLI variables (highest priority - override everything)
+				for k, v := range *flags.templateVars {
+					vars[k] = v
+				}
+
+				policies, err := template.RenderPolicies(zoneConfig.TemplateFile, zoneConfig.TemplateInline, vars)
+				if err != nil {
+					return fmt.Errorf("render policy template for zone %q: %w", flags.zoneName, err)
+				}
+				renderedPolicies = policies
+			} else if len(zoneConfig.Permissions) > 0 {
+				// Use static permissions from zone config
+				flags.permissions = strings.Join(zoneConfig.Permissions, ",")
+			}
+		}
+
+		// Use zone CIDRs if not provided via flag
+		if !allowCIDRsProvided && len(zoneConfig.AllowedCIDRs) > 0 {
+			flags.allowCIDRs = strings.Join(zoneConfig.AllowedCIDRs, ",")
+		}
+
+		// Use zone TTL if specified
+		if zoneConfig.TTL != "" {
+			if ttlDuration, err := time.ParseDuration(zoneConfig.TTL); err == nil {
+				flags.ttl = ttlDuration
+			}
+		}
 	}
 
 	var configuredPermissions []string
@@ -226,7 +320,31 @@ func run() error {
 		return nil
 	}
 
-	result, err := client.CreateToken(ctx, tokenName, zoneID, permissionInputs, expiresOn, allowedCIDRs)
+	var result *cloudflare.TokenResult
+
+	// Use pre-built policies if available from template, otherwise use permission strings
+	if len(renderedPolicies) > 0 {
+		// Convert template.Policy to cloudflare.Policy
+		cfPolicies := make([]cloudflare.Policy, len(renderedPolicies))
+		for i, tplPolicy := range renderedPolicies {
+			cfPolicies[i] = cloudflare.Policy{
+				ID:        tplPolicy.ID,
+				Effect:    tplPolicy.Effect,
+				Resources: tplPolicy.Resources,
+			}
+			// Convert permission groups
+			for _, pg := range tplPolicy.PermissionGroups {
+				cfPolicies[i].PermissionGroups = append(cfPolicies[i].PermissionGroups, cloudflare.PolicyPermissionGroup{
+					ID:   pg.ID,
+					Name: pg.Name,
+				})
+			}
+		}
+		result, err = client.CreateTokenWithPolicies(ctx, tokenName, cfPolicies, expiresOn, allowedCIDRs)
+	} else {
+		result, err = client.CreateToken(ctx, tokenName, zoneID, permissionInputs, expiresOn, allowedCIDRs)
+	}
+
 	if err != nil {
 		return fmt.Errorf("token creation failed: %w", err)
 	}

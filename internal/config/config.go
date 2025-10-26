@@ -11,9 +11,21 @@ import (
 
 // settings mirrors the JSON structure stored in the config file.
 type settings struct {
-	DefaultPermissions  []string          `json:"default_permissions"`
-	DefaultAllowedCIDRs []string          `json:"default_allowed_cidrs"`
-	Zones               map[string]string `json:"zones"`
+	DefaultPermissions  []string               `json:"default_permissions"`
+	DefaultAllowedCIDRs []string               `json:"default_allowed_cidrs"`
+	Zones               map[string]interface{} `json:"zones"`
+}
+
+// ZoneConfig defines extended configuration for a zone with optional template for permissions.
+type ZoneConfig struct {
+	ZoneID          string                 `json:"zone_id"`
+	Permissions     []string               `json:"permissions"`
+	AllowedCIDRs    []string               `json:"allowed_cidrs"`
+	TTL             string                 `json:"ttl"`
+	TemplateFile    string                 `json:"template_file"`
+	TemplateInline  string                 `json:"template_inline"`
+	Variables       map[string]interface{} `json:"variables"`
+	InheritDefaults bool                   `json:"inherit_defaults"`
 }
 
 // DefaultPath resolves the config file path according to XDG conventions.
@@ -92,4 +104,55 @@ func sanitizeStringList(values []string) []string {
 		}
 	}
 	return out
+}
+
+// LoadZoneConfig loads zone configuration by name. Returns the zone ID and optional extended config.
+func LoadZoneConfig(zoneName string) (string, *ZoneConfig, error) {
+	cfg, err := loadSettings()
+	if err != nil {
+		return "", nil, err
+	}
+
+	if cfg.Zones == nil {
+		return "", nil, fmt.Errorf("no zones configured")
+	}
+
+	zoneValue, ok := cfg.Zones[zoneName]
+	if !ok {
+		return "", nil, fmt.Errorf("zone %q not found", zoneName)
+	}
+
+	// Handle simple string zone ID
+	if zoneID, ok := zoneValue.(string); ok {
+		return zoneID, nil, nil
+	}
+
+	// Handle complex zone configuration
+	zoneMap, ok := zoneValue.(map[string]interface{})
+	if !ok {
+		return "", nil, fmt.Errorf("zone %q has invalid configuration format", zoneName)
+	}
+
+	// Marshal back to JSON and unmarshal into ZoneConfig
+	data, err := json.Marshal(zoneMap)
+	if err != nil {
+		return "", nil, fmt.Errorf("parse zone config: %w", err)
+	}
+
+	var zoneConfig ZoneConfig
+	if err := json.Unmarshal(data, &zoneConfig); err != nil {
+		return "", nil, fmt.Errorf("parse zone config: %w", err)
+	}
+
+	// Apply defaults if requested
+	if zoneConfig.InheritDefaults {
+		if len(zoneConfig.Permissions) == 0 && len(cfg.DefaultPermissions) > 0 {
+			zoneConfig.Permissions = append([]string(nil), cfg.DefaultPermissions...)
+		}
+		if len(zoneConfig.AllowedCIDRs) == 0 && len(cfg.DefaultAllowedCIDRs) > 0 {
+			zoneConfig.AllowedCIDRs = append([]string(nil), cfg.DefaultAllowedCIDRs...)
+		}
+	}
+
+	return zoneConfig.ZoneID, &zoneConfig, nil
 }
