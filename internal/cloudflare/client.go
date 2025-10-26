@@ -210,41 +210,7 @@ type PolicyPermissionGroup struct {
 	Name string `json:"name,omitempty"`
 }
 
-// CreateToken provisions a new token scoped to the provided zone identifier with the desired permissions.
-func (c *Client) CreateToken(ctx context.Context, tokenName, zoneID string, permissionInputs []string, expiresOn *time.Time, allowedCIDRs []string) (*TokenResult, error) {
-	perms, err := c.PermissionGroups(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("fetch permission groups: %w", err)
-	}
-
-	params, _, err := buildTokenParams(perms, tokenName, zoneID, permissionInputs, expiresOn, allowedCIDRs)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.api.User.Tokens.New(ctx, *params)
-	if err != nil {
-		return nil, fmt.Errorf("create token: %w", err)
-	}
-	if resp == nil {
-		return nil, errors.New("cloudflare API returned an empty response")
-	}
-
-	result := &TokenResult{
-		ID:           resp.ID,
-		Name:         resp.Name,
-		Status:       string(resp.Status),
-		Value:        string(resp.Value),
-		ZoneID:       zoneID,
-		AllowedCIDRs: append([]string(nil), allowedCIDRs...),
-	}
-	if !resp.ExpiresOn.IsZero() {
-		result.ExpiresOn = resp.ExpiresOn.UTC().Format(time.RFC3339)
-	}
-	return result, nil
-}
-
-// CreateTokenWithPolicies provisions a new token using pre-built policy structures from templates.
+// CreateTokenWithPolicies provisions a new token using policy structures.
 func (c *Client) CreateTokenWithPolicies(ctx context.Context, tokenName string, policies []Policy, expiresOn *time.Time, allowedCIDRs []string) (*TokenResult, error) {
 	params, err := buildTokenParamsFromPolicies(tokenName, policies, expiresOn, allowedCIDRs)
 	if err != nil {
@@ -272,57 +238,18 @@ func (c *Client) CreateTokenWithPolicies(ctx context.Context, tokenName string, 
 	return result, nil
 }
 
-// PreviewToken prepares the payload that would be sent to create a token without executing the API call.
-func (c *Client) PreviewToken(ctx context.Context, tokenName, zoneID string, permissionInputs []string, expiresOn *time.Time, allowedCIDRs []string) (*cfuser.TokenNewParams, []PermissionGroup, error) {
+// MatchPermissions matches user-provided permission inputs to permission groups.
+func (c *Client) MatchPermissions(ctx context.Context, permissionInputs []string) ([]PermissionGroup, error) {
 	perms, err := c.PermissionGroups(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("fetch permission groups: %w", err)
+		return nil, fmt.Errorf("fetch permission groups: %w", err)
 	}
 
-	params, matchedGroups, err := buildTokenParams(perms, tokenName, zoneID, permissionInputs, expiresOn, allowedCIDRs)
+	_, matchedGroups, err := matchPermissionGroups(perms, permissionInputs)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return params, matchedGroups, nil
-}
-
-func buildTokenParams(perms []PermissionGroup, tokenName, zoneID string, permissionInputs []string, expiresOn *time.Time, allowedCIDRs []string) (*cfuser.TokenNewParams, []PermissionGroup, error) {
-	permissionRefs, matchedGroups, err := matchPermissionGroups(perms, permissionInputs)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	resourceKey := fmt.Sprintf("com.cloudflare.api.account.zone.%s", zoneID)
-	policy := shared.TokenPolicyParam{
-		Effect:           cf.F(shared.TokenPolicyEffectAllow),
-		PermissionGroups: cf.F(permissionRefs),
-		Resources: cf.F[shared.TokenPolicyResourcesUnionParam](
-			shared.TokenPolicyResourcesIAMResourcesTypeObjectStringParam{
-				resourceKey: "*",
-			},
-		),
-	}
-
-	params := &cfuser.TokenNewParams{
-		Name:     cf.F(tokenName),
-		Policies: cf.F([]shared.TokenPolicyParam{policy}),
-	}
-	if expiresOn != nil {
-		params.ExpiresOn = cf.F(expiresOn.UTC())
-	}
-	if len(allowedCIDRs) > 0 {
-		values := make([]shared.TokenConditionCIDRListParam, 0, len(allowedCIDRs))
-		for _, cidr := range allowedCIDRs {
-			values = append(values, shared.TokenConditionCIDRListParam(cidr))
-		}
-		params.Condition = cf.F(cfuser.TokenNewParamsCondition{
-			RequestIP: cf.F(cfuser.TokenNewParamsConditionRequestIP{
-				In: cf.F(values),
-			}),
-		})
-	}
-
-	return params, matchedGroups, nil
+	return matchedGroups, nil
 }
 
 func buildTokenParamsFromPolicies(tokenName string, policies []Policy, expiresOn *time.Time, allowedCIDRs []string) (*cfuser.TokenNewParams, error) {

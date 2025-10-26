@@ -314,37 +314,56 @@ func run() error {
 		expiresOn = &exp
 	}
 
+	// Build policies for dry-run and actual creation
+	// If no template was rendered, build a simple zone-scoped policy from permission inputs
+	policiesToUse := renderedPolicies
+	if len(policiesToUse) == 0 {
+		matchedGroups, err := client.MatchPermissions(ctx, permissionInputs)
+		if err != nil {
+			return fmt.Errorf("match permission groups: %w", err)
+		}
+
+		resourceKey := fmt.Sprintf("com.cloudflare.api.account.zone.%s", zoneID)
+		policy := template.Policy{
+			Effect: "allow",
+			Resources: map[string]interface{}{
+				resourceKey: "*",
+			},
+			PermissionGroups: make([]template.PermissionGroup, len(matchedGroups)),
+		}
+		for i, pg := range matchedGroups {
+			policy.PermissionGroups[i] = template.PermissionGroup{
+				ID:   pg.ID,
+				Name: pg.Name,
+			}
+		}
+		policiesToUse = []template.Policy{policy}
+	}
+
 	if flags.dryRun {
-		if err := printDryRun(ctx, client, tokenName, zoneID, resolvedZoneName, permissionInputs, expiresOn, allowedCIDRs); err != nil {
+		if err := printDryRun(tokenName, zoneID, resolvedZoneName, expiresOn, allowedCIDRs, policiesToUse); err != nil {
 			return fmt.Errorf("dry run failed: %w", err)
 		}
 		return nil
 	}
 
-	var result *cloudflare.TokenResult
-
-	// Use pre-built policies if available from template, otherwise use permission strings
-	if len(renderedPolicies) > 0 {
-		// Convert template.Policy to cloudflare.Policy
-		cfPolicies := make([]cloudflare.Policy, len(renderedPolicies))
-		for i, tplPolicy := range renderedPolicies {
-			cfPolicies[i] = cloudflare.Policy{
-				ID:        tplPolicy.ID,
-				Effect:    tplPolicy.Effect,
-				Resources: tplPolicy.Resources,
-			}
-			// Convert permission groups
-			for _, pg := range tplPolicy.PermissionGroups {
-				cfPolicies[i].PermissionGroups = append(cfPolicies[i].PermissionGroups, cloudflare.PolicyPermissionGroup{
-					ID:   pg.ID,
-					Name: pg.Name,
-				})
-			}
+	// Convert template.Policy to cloudflare.Policy
+	cfPolicies := make([]cloudflare.Policy, len(policiesToUse))
+	for i, tplPolicy := range policiesToUse {
+		cfPolicies[i] = cloudflare.Policy{
+			ID:        tplPolicy.ID,
+			Effect:    tplPolicy.Effect,
+			Resources: tplPolicy.Resources,
 		}
-		result, err = client.CreateTokenWithPolicies(ctx, tokenName, cfPolicies, expiresOn, allowedCIDRs)
-	} else {
-		result, err = client.CreateToken(ctx, tokenName, zoneID, permissionInputs, expiresOn, allowedCIDRs)
+		// Convert permission groups
+		for _, pg := range tplPolicy.PermissionGroups {
+			cfPolicies[i].PermissionGroups = append(cfPolicies[i].PermissionGroups, cloudflare.PolicyPermissionGroup{
+				ID:   pg.ID,
+				Name: pg.Name,
+			})
+		}
 	}
+	result, err := client.CreateTokenWithPolicies(ctx, tokenName, cfPolicies, expiresOn, allowedCIDRs)
 
 	if err != nil {
 		return fmt.Errorf("token creation failed: %w", err)
@@ -538,12 +557,7 @@ func listZones() error {
 	return nil
 }
 
-func printDryRun(ctx context.Context, client *cloudflare.Client, tokenName, zoneID, zoneName string, permissionInputs []string, expiresOn *time.Time, allowedCIDRs []string) error {
-	params, matchedGroups, err := client.PreviewToken(ctx, tokenName, zoneID, permissionInputs, expiresOn, allowedCIDRs)
-	if err != nil {
-		return err
-	}
-
+func printDryRun(tokenName, zoneID, zoneName string, expiresOn *time.Time, allowedCIDRs []string, policies []template.Policy) error {
 	fmt.Println("DRY RUN: no changes made.")
 	fmt.Println("Token would be created with:")
 	fmt.Printf("  Name: %s\n", tokenName)
@@ -558,30 +572,27 @@ func printDryRun(ctx context.Context, client *cloudflare.Client, tokenName, zone
 		fmt.Println("  Expires: none")
 	}
 	fmt.Printf("  Allowed CIDRs: %s\n", joinOrDefault(allowedCIDRs, "none"))
-	fmt.Printf("  Permission inputs: %s\n", joinOrDefault(permissionInputs, "none"))
-	fmt.Println("  Permission groups:")
-	if len(matchedGroups) == 0 {
-		fmt.Println("    (none)")
-	} else {
-		for _, group := range matchedGroups {
-			display := coalesce(group.Name, group.Meta.Key, group.ID)
-			if group.Meta.Key != "" && group.Meta.Key != display {
-				fmt.Printf("    - %s (%s, key: %s)\n", display, group.ID, group.Meta.Key)
-			} else {
-				fmt.Printf("    - %s (%s)\n", display, group.ID)
+
+	fmt.Println("  Policies:")
+	for idx, policy := range policies {
+		fmt.Printf("    Policy %d:\n", idx+1)
+		fmt.Printf("      Effect: %s\n", policy.Effect)
+		if len(policy.Resources) > 0 {
+			fmt.Println("      Resources:")
+			for key, val := range policy.Resources {
+				fmt.Printf("        %s: %v\n", key, val)
 			}
 		}
-	}
-	fmt.Println("  Resources:")
-	if policiesField := params.Policies; policiesField.Present {
-		policies := policiesField.Value
-		if len(policies) > 0 {
-			fmt.Printf("    - com.cloudflare.api.account.zone.%s -> *\n", zoneID)
-		} else {
-			fmt.Println("    (none)")
+		if len(policy.PermissionGroups) > 0 {
+			fmt.Println("      Permission Groups:")
+			for _, pg := range policy.PermissionGroups {
+				if pg.Name != "" {
+					fmt.Printf("        - %s (%s)\n", pg.Name, pg.ID)
+				} else {
+					fmt.Printf("        - %s\n", pg.ID)
+				}
+			}
 		}
-	} else {
-		fmt.Println("    (none)")
 	}
 	return nil
 }
