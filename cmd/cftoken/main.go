@@ -226,6 +226,7 @@ func run() error {
 		// Use zone CIDRs if not provided via flag
 		if !allowCIDRsProvided && len(zoneConfig.AllowedCIDRs) > 0 {
 			flags.allowCIDRs = strings.Join(zoneConfig.AllowedCIDRs, ",")
+			allowCIDRsProvided = true
 		}
 
 		// Use zone TTL if specified
