@@ -1,0 +1,29 @@
+name: publish cftoken release
+on:
+  push:
+    tags: '*'
+
+jobs:
+  relaser:
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Import GPG key
+      id: import_gpg
+      uses: crazy-max/ghaction-import-gpg@v6
+      with:
+        gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+        passphrase: ${{ secrets.PASSPHRASE }}
+
+    - name: Run GoReleaser
+      uses: goreleaser/goreleaser-action@v6
+      with:
+        version: '~> v2'
+        args: release --clean
+        workdir: cmd/cftoken
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Upload assets
+      uses: actions/upload-artifact@v4
+      with:
+        name: cftoken
+        path: cmd/cftoken/cftoken
