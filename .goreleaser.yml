@@ -29,7 +29,6 @@ archives:
       {{- .Version }}_
       {{- .Os }}_
       {{- .Arch }}
-    rlcp: true
     files:
       - LICENSE*
       - README*
@@ -63,9 +62,6 @@ changelog:
       order: 999
 
 release:
-  github:
-    owner: dani-CO-CN
-    name: cftoken
   draft: false
   prerelease: auto
   mode: append
