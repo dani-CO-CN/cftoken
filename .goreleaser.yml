@@ -28,7 +28,6 @@ archives:
       - binary
     name_template: >-
       {{ .ProjectName }}_
-      {{- .Version }}_
       {{- .Os }}_
       {{- .Arch }}
 
@@ -38,6 +37,8 @@ checksum:
 
 signs:
   - cmd: cosign
+    signature: ${artifact}.sig
+    certificate: ${artifact}.pem
     args:
       - sign-blob
       - --yes
@@ -78,14 +79,6 @@ release:
     ## cftoken {{ .Tag }}
 
     Release binaries for cftoken version {{ .Tag }}.
-
-    ### Download
-
-    Download the binary for your platform:
-    - Linux AMD64: `cftoken_{{ .Tag }}_linux_amd64`
-    - Linux ARM64: `cftoken_{{ .Tag }}_linux_arm64`
-    - macOS AMD64: `cftoken_{{ .Tag }}_darwin_amd64`
-    - macOS ARM64: `cftoken_{{ .Tag }}_darwin_arm64`
 
     ### Verification
 
