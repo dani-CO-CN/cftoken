@@ -51,6 +51,7 @@ signs:
 changelog:
   sort: asc
   use: github
+  format: "{{.CommitHash}}: {{.Message}}"
   filters:
     exclude:
       - '^docs:'
@@ -80,7 +81,8 @@ release:
 
     Release binaries for cftoken version {{ .Tag }}.
 
-    ### Verification
+    <details>
+    <summary>Verification</summary>
 
     Checksums are signed with [Cosign](https://github.com/sigstore/cosign). To verify:
 
@@ -97,3 +99,5 @@ release:
     # Verify the binary checksum
     sha256sum --check --ignore-missing checksums.txt
     ```
+
+    </details>
