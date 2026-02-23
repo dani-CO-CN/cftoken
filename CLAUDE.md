@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-`cftoken` is a CLI tool that provisions scoped Cloudflare API tokens. It uses the official `cloudflare-go` SDK to fetch permission groups and create tokens with granular zone-level access controls.
+`cftoken` is a CLI tool that provisions scoped Cloudflare API tokens. It uses the official `cloudflare-go` SDK to fetch permission groups and create tokens with granular zone-level access controls. We write an internal helper client for the Cloudflare API located at https://developers.cloudflare.com/api/
 
 ## Prerequisites
 
@@ -58,6 +58,8 @@ The codebase follows a standard Go project structure:
 
 ### Key Design Patterns
 
+1. **Simplicity**: This project prefers short and simple code - KISS. 
+
 1. **Configuration Priority**: Command-line flags always override config file values. If neither is provided, hard-coded defaults apply.
 
 2. **Permission Resolution**: The `internal/cloudflare/client.go:matchPermissionGroups()` function (line 355) matches user input (permission names, keys, or IDs) against the Cloudflare API's permission groups using case-insensitive normalized matching.
@@ -81,6 +83,10 @@ The codebase follows a standard Go project structure:
    - Permission templates render to JSON arrays using Go's `text/template`
    - CLI flags override zone config (precedence: flags > zone config > config defaults)
    - Templates are optional; zones can use static permission lists instead
+
+1. **Clarify Implentation Details**:
+   - If implentation details are not clearly defined clarify the questions
+   - Propose a implementation plan, the plan needs to be approved before implementation.
 
 ## Configuration File
 

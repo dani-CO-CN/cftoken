@@ -26,3 +26,13 @@ Never commit real Cloudflare tokens. Reference them via environment variables su
 
 ## Documentation
 For end users we want to keep the docs in the README.md located at the root folder level, the documentation is written in markdown - the documentation contains the goal of the project and the most important functions and examples in that file and also the default help for the binary.
+
+## Design Patterns
+
+1. **Simplicity**: This project prefers short and simple code - KISS. 
+
+1. **Configuration Priority**: Command-line flags always override config file values. If neither is provided, hard-coded defaults apply. 
+
+1. **Clarify Implentation Details**:
+   - If implentation details are not clearly defined clarify the questions
+   - Propose a implementation plan, the plan needs to be approved before implementation.
