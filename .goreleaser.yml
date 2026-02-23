@@ -24,7 +24,8 @@ builds:
 
 archives:
   - id: cftoken-archive
-    format: binary
+    formats:
+      - binary
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
