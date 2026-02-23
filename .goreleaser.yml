@@ -24,15 +24,12 @@ builds:
 
 archives:
   - id: cftoken-archive
-    format: tar.gz
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
       {{- .Os }}_
       {{- .Arch }}
-    format_overrides:
-      - goos: windows
-        format: zip
+    rlcp: true
     files:
       - LICENSE*
       - README*
@@ -67,8 +64,8 @@ changelog:
 
 release:
   github:
-    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
-    name: "{{ .ProjectName }}"
+    owner: dani-CO-CN
+    name: cftoken
   draft: false
   prerelease: auto
   mode: append
