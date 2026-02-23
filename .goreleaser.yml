@@ -51,7 +51,6 @@ signs:
 changelog:
   sort: asc
   use: github
-  format: "{{.CommitHash}}: {{.Message}}"
   filters:
     exclude:
       - '^docs:'
