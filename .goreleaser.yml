@@ -24,19 +24,27 @@ builds:
 
 archives:
   - id: cftoken-archive
+    format: binary
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
       {{- .Os }}_
       {{- .Arch }}
-    files:
-      - LICENSE*
-      - README*
-      - CHANGELOG*
 
 checksum:
   name_template: 'checksums.txt'
   algorithm: sha256
+
+signs:
+  - cmd: cosign
+    args:
+      - sign-blob
+      - --yes
+      - --output-signature=${signature}
+      - --output-certificate=${certificate}
+      - ${artifact}
+    artifacts: checksum
+    output: true
 
 changelog:
   sort: asc
@@ -70,15 +78,23 @@ release:
 
     Release binaries for cftoken version {{ .Tag }}.
 
+    ### Download
+
+    Download the binary for your platform:
+    - Linux AMD64: `cftoken_{{ .Tag }}_linux_amd64`
+    - Linux ARM64: `cftoken_{{ .Tag }}_linux_arm64`
+    - macOS AMD64: `cftoken_{{ .Tag }}_darwin_amd64`
+    - macOS ARM64: `cftoken_{{ .Tag }}_darwin_arm64`
+
     ### Verification
 
-    All binaries are signed with [Cosign](https://github.com/sigstore/cosign). To verify:
+    Checksums are signed with [Cosign](https://github.com/sigstore/cosign). To verify:
 
     ```bash
-    # Download the binary, checksums, and signature files
+    # Download the binary and checksum files
     # Verify the checksums file signature
     cosign verify-blob \
-      --certificate-identity "https://github.com/{{ .Env.GITHUB_REPOSITORY }}/.github/workflows/main.yml@refs/tags/{{ .Tag }}" \
+      --certificate-identity "https://github.com/dani-CO-CN/cftoken/.github/workflows/main.yml@refs/tags/{{ .Tag }}" \
       --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
       --signature checksums.txt.sig \
       --certificate checksums.txt.pem \

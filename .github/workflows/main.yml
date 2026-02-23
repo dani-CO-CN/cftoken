@@ -31,17 +31,3 @@ jobs:
         args: release --clean
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Sign checksums with Cosign
-      run: |
-        cosign sign-blob --yes \
-          --output-signature=dist/checksums.txt.sig \
-          --output-certificate=dist/checksums.txt.pem \
-          dist/checksums.txt
-
-    - name: Upload signature to release
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        TAG=${GITHUB_REF#refs/tags/}
-        gh release upload "$TAG" dist/checksums.txt.sig dist/checksums.txt.pem
