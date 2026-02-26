@@ -14,10 +14,10 @@ export CLOUDFLARE_API_TOKEN=your-admin-token
 ## Usage
 ```bash
 # Token prefix defaults to zone name
-go run ./cmd/cftoken -zone dev
+cftoken -zone dev
 
 # Or specify a custom token prefix
-go run ./cmd/cftoken -token-prefix my-app -zone example.com
+cftoken -token-prefix my-app -zone example.com
 ```
 
 Flags of note:
@@ -37,7 +37,7 @@ Flags of note:
 
 You can open the compiled binary usage any time:
 ```bash
-go run ./cmd/cftoken -h
+cftoken -h
 ```
 
 ## Configuration
@@ -61,7 +61,7 @@ The CLI reads a single JSON file at `$XDG_CONFIG_HOME/cftoken/config.json` (fall
 These defaults are optional, but when present they replace the CLI fallbacks:
 - `default_permissions` seeds the `-permissions` flag when omitted.
 - `default_allowed_cidrs` seeds the `-allow-cidrs` flag when omitted.
-- `zones` powers `-zone` lookups and the `-list-zones` command; run `go run ./cmd/cftoken -list-zones` to verify entries.
+- `zones` powers `-zone` lookups and the `-list-zones` command; run `cftoken -list-zones` to verify entries.
 
 Command-line flags always take precedence over `config.json` values, so pass `-permissions` or `-allow-cidrs` to override the defaults on demand.
 
@@ -69,7 +69,7 @@ Use `0.0.0.0/32` in either the flag or config to disable IP restrictions entirel
 
 The CLI always prints the final allowed CIDR list for the newly created token so you can audit the restriction that Cloudflare enforces.
 
-For debugging, add `-inspect` alongside normal token creation to automatically print the new token's policies, or run `go run ./cmd/cftoken -inspect` on its own (optionally with `-inspect-token <value>`) to review existing tokens.
+For debugging, add `-inspect` alongside normal token creation to automatically print the new token's policies, or run `cftoken -inspect` on its own (optionally with `-inspect-token <value>`) to review existing tokens.
 
 ## Zones with Extended Configuration
 
@@ -195,28 +195,28 @@ Create tokens using the `-zone` flag (token prefix defaults to zone name):
 
 ```bash
 # Use simple zone (string mapping) - token named "simple.example.com-20060102T150405Z"
-go run ./cmd/cftoken -zone simple.example.com
+cftoken -zone simple.example.com
 
 # Use dev zone with extended config - token named "dev-20060102T150405Z"
-go run ./cmd/cftoken -zone dev
+cftoken -zone dev
 
 # Use prod zone with extended config
-go run ./cmd/cftoken -zone prod
+cftoken -zone prod
 
 # Specify custom token prefix
-go run ./cmd/cftoken -token-prefix myapp -zone prod
+cftoken -token-prefix myapp -zone prod
 
 # Override template variables with -var flags (CLI variables override config)
-go run ./cmd/cftoken -zone dev -var ZoneID=abc123 -var IncludeEdit=true
+cftoken -zone dev -var ZoneID=abc123 -var IncludeEdit=true
 
 # Inject multiple variables
-go run ./cmd/cftoken -zone prod -var AccountID=my-account -var ZoneID1=zone-a -var ZoneID2=zone-b
+cftoken -zone prod -var AccountID=my-account -var ZoneID1=zone-a -var ZoneID2=zone-b
 
 # Override zone settings with flags
-go run ./cmd/cftoken -zone prod -permissions "Zone:Read,Zone:Edit"
+cftoken -zone prod -permissions "Zone:Read,Zone:Edit"
 
 # List all configured zones
-go run ./cmd/cftoken -list-zones
+cftoken -list-zones
 ```
 
 ### Template Features
